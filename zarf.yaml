@@ -1,0 +1,20 @@
+kind: ZarfPackageConfig
+metadata:
+  name: compliance-demo
+  description: "Simple compliance demo"
+
+variables:
+  - name: INJECT
+    description: "istio sidecar injection"
+    default: "true"
+
+components:
+  - name: baseline
+    required: true
+    manifests:
+      - name: workload
+        namespace: test
+        files:
+          - deployment.yaml
+    images:
+      - docker.io/nginx:1.23.2

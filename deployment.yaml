@@ -1,0 +1,26 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  creationTimestamp: null
+  labels:
+    app: workload
+  name: workload
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: workload
+  strategy: {}
+  template:
+    metadata:
+      creationTimestamp: null
+      labels:
+        sidecar.istio.io/inject: "###ZARF_VAR_INJECT###"
+        app: workload
+      annotations:
+        sidecarinjection: "###ZARF_VAR_INJECT###"
+    spec:
+      containers:
+      - image: nginx:1.23.2
+        name: nginx
+status: {}

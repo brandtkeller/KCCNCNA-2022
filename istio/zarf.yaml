@@ -1,0 +1,25 @@
+kind: ZarfPackageConfig
+metadata:
+  name: istio-package
+  description: "Simple example to load compliant and non-compliant workloads"
+
+components:
+  - name: istio-base
+    description: "istio for arm64"
+    charts:
+      - name: base
+        url: https://istio-release.storage.googleapis.com/charts
+        version: 1.15.2 
+        namespace: istio-system
+
+  - name: istiod
+    description: "istiod for arm64"
+    images:
+      - docker.io/istio/pilot:1.15.2
+      - docker.io/istio/proxyv2:1.15.2
+      
+    charts:
+      - name: istiod
+        url: https://istio-release.storage.googleapis.com/charts
+        version: 1.15.2 
+        namespace: istio-system

@@ -1,0 +1,207 @@
+component-definition:
+  uuid: 7E3269FC-FE33-49C9-BE88-6C868E21AAE1
+  metadata:
+    title: Istio Controlplane
+    last-modified: '2021-10-19T12:00:00Z'
+    version: "20211019"
+    oscal-version: 1.0.0
+    parties:
+    - uuid: 72134592-08C2-4A77-ABAD-C880F109367A
+      type: organization
+      name: Platform One
+      links:
+      - href: https://p1.dso.mil
+        rel: website
+  components:
+  - uuid: 81F6EC5D-9B8D-408F-8477-F8A04F493690
+    type: software
+    title: Istio Controlplane
+    description: |
+      Istio Service Mesh
+    purpose: Istio Service Mesh
+    responsible-roles:
+    - role-id: provider
+      party-uuids:
+        - 72134592-08C2-4A77-ABAD-C880F109367A # matches parties entry for p1
+    control-implementations:
+    - uuid: 06717F3D-CE1E-494C-8F36-99D1316E0D13
+      source: https://raw.githubusercontent.com/usnistgov/oscal-content/master/nist.gov/SP800-53/rev5/json/NIST_SP-800-53_rev5_catalog.json
+      description:
+        Controls implemented by Istio and authservice that are inherited by applications
+      implemented-requirements:
+      - uuid: D7717A9B-7604-45EF-8DCF-EE4DF0417F9C
+        control-id: ac-4
+        description: >-
+          Istio implements with mission team configuration
+
+          # Control Summary
+          The information system enforces approved authorizations for controlling the flow of information within the system and between interconnected systems based on [Assignment: organization-defined information flow control policies].
+
+          # How does Istio help?
+          Istio encrypts all in-mesh communication at runtime using the service's identity. This provides TLS for all applications in the mesh. If you're using the Tetrate Istio Distribution, then this TLS is FIPS verified. mTLS is configured through the PeerAuthentication resource, and should be set to STRICT to enforce mTLS between all components of the information system.
+
+          Istio's AuthorizationPolicy controls service-to-service communication within the mesh. Combined with Istio ingress and egress gateways, as well as a few installation settings, Istio can manage all traffic into and out of your deployment.
+
+          In addition to AuthorizationPolicies controlling traffic in the mesh, Istio ingress gateways terminate HTTPS on behalf of applications in the mesh (AC-4 (4) - not required by moderate but valuable nonetheless). By managing how traffic flows out of applications using VirtualServices or ServiceEntries, all traffic leaving your infrastructure can be channeled through an egress gateway. Egress gateways can audit and limit how traffic flows to external services outside of the information system under control.
+
+          While Istio is sufficient for runtime security, most organizations will adopt a defense in depth approach that includes firewalls for inbound and outbound traffic. These firewalls should only allow ingress into Istio control ingress gateways, and only allow egress from Istio-controlled egress gateways. Further, many organizations will augment mesh authorization policy with L3/L4 network segmentation, e.g. with Kubernetes CNI; this is a good practice.
+
+          # Detailed Instructions
+
+          ## Enable Authentication
+          Within the mesh, encryption in transit is enforced with a PeerAuthentication resource. A single resource should be authored in the root config namespace (istio-system by default) which sets mTLS Mode to STRICT, enforcing mTLS for all workloads in the mesh.
+          ```
+          apiVersion: security.istio.io/v1beta1
+          kind: PeerAuthentication
+          metadata:
+            name: enforce-mtls
+            namespace: istio-system
+          spec:
+            mtls:
+              mode: STRICT
+          ```
+
+          ## Configure Service-to-Service Authorization
+          Each service should write an [AuthorizationPolicy](https://istio.io/latest/docs/reference/config/security/authorization-policy/) restricting communication to that service. At a minimum, the AuthorizationPolicy configuration should list a set of principals allowed to communicate with it via an Access Control List (ACL) in the "from" section of the policy. Ideally it should specify specific actions allowed by each group of principals in the "to" section of the policy. If you're using JWT-based user authentication, then the policy should additionally restrict access based on that user credential in the "when" section of the policy.
+          ```
+          apiVersion: security.istio.io/v1beta1
+          kind: AuthorizationPolicy
+          metadata:
+            name: minimum-policy # an ACL
+            namespace: foo
+          spec:
+            action: ALLOW
+            rules:
+            - from:
+              - source:
+                principals:
+                - "cluster.local/ns/default/sa/sleep"
+                - "cluster.local/ns/backend/sa/backend"
+          ```
+          ```
+          apiVersion: security.istio.io/v1beta1
+          kind: AuthorizationPolicy
+          metadata:
+            name: good-policy
+            namespace: foo
+          spec:
+            action: ALLOW
+            rules:
+            - from:
+              - source:
+                  principals: ["cluster.local/ns/default/sa/sleep"]
+              - source:
+                  namespaces: ["test"]
+              to:
+              - operation:
+                  methods: ["GET"]
+                  paths: ["/info*"]
+              - operation:
+                  methods: ["POST"]
+                  paths: ["/data"]
+              when:
+              - key: request.auth.claims[iss]
+                values: ["https://accounts.google.com"]
+          ```
+
+          ## Forbid Communication to Unknown Services
+          Istio's documentation covers [controlling traffic to external services in detail](https://istio.io/latest/docs/tasks/traffic-management/egress/egress-control/).
+          In short, we should configure the Istio installation to support only services in the registry at installation time. That way, when applications attempt to communicate with unknown services, Istio drops the traffic. This is configured in the mesh config at install time:
+          ```
+          apiVersion: install.istio.io/v1alpha1
+          kind: IstioOperator
+          metadata:
+            name: controlplane
+            namespace: istio-system
+          spec:
+            # profile: default
+            # ...
+            meshConfig:
+              # Only allow outbound traffic to known services
+              outboundTrafficPolicy: REGISTRY_ONLY
+          ```
+          To enable communication to those services again, we need to author a ServiceEntry - which defines the service in Istio's registry.
+          ```
+          apiVersion: networking.istio.io/v1alpha3
+          kind: ServiceEntry
+          metadata:
+            name: google
+          spec:
+            hosts:
+            - www.google.com
+            ports:
+            - number: 443
+              name: https
+              protocol: HTTPS
+            resolution: DNS
+            location: MESH_EXTERNAL
+          ```
+
+          ## Control Egress Traffic
+          For extra security, or to interact with outbound firewalls, we can force outbound traffic in Istio to go through a dedicated egress proxy. These proxies can be deployed on specific hosts to interact gracefully with traditional outbound firewalls if needed.
+
+          To force traffic to an external service through the egress gateways, it's best to use a VirtualService combined with a slight modification to the ServiceEntry in the previous example. The service entry will force traffic in the mesh trying to reach the external service through the mesh's egress gateways. The updated ServiceEntry ensures that only the egress gateways are able to resolve the real address of the external service.
+
+          ```
+          apiVersion: networking.istio.io/v1alpha3
+          kind: ServiceEntry
+          metadata:
+            name: google-external
+            namespace: istio-system # namespace of your egress proxy
+          spec:
+            hosts:
+            - www.google.com
+            exportTo:
+            # only the local namespace can resolve google.com to a DNS address
+            - "."
+            ports:
+            - number: 443
+              name: https
+              protocol: HTTPS
+            resolution: DNS
+            location: MESH_EXTERNAL
+          ---
+          apiVersion: networking.istio.io/v1alpha3
+          kind: VirtualService
+          metadata:
+            name: google-egress
+            namespace: istio-system # default config goes in Istio system
+          spec:
+            hosts:
+            - www.google.com
+            gateways:
+            - mesh # only apply to sidecars, not the egress gateway
+            tls:
+            - match:
+              - port: 443
+                sniHosts:
+                - google.com
+              route:
+              - destination:
+                  host: istio-egressgateways.istio-system
+          ```
+
+          # BigBang Implementation
+          BigBang's default configuration deploys Istio-controlled ingress gateways and forces outbound traffic through egress proxies. So long as your developers write authorization policy for communication of the applications they deploy inside of the cluster, you comply with AC-4.
+        rules:
+        - name: istio-controlplane_AC-4(istio-injection-enabled)
+          match:
+            any:
+            - resources:
+                kinds: 
+                - Pod
+                namespaces:
+                - test
+          exclude:
+            any:
+            - resources:
+                kinds:
+                - deployment
+                - statefulset
+                - daemonset
+          validate:
+            message: "Every pod should have istio-proxy"
+            pattern:
+              spec:
+                ^(containers):
+                - image: "*/istio/proxyv*"
